@@ -1,8 +1,14 @@
 /**
- *Submitted for verification at BscScan.com on 2021-08-07
+ *Submitted for verification at BscScan.com on 2021-10-16
 */
 
-pragma solidity ^0.8.2;
+/**
+ *Submitted for verification at BscScan.com on 2021-10-16
+*/
+
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.7;
 
 
 abstract contract Context {
@@ -440,7 +446,7 @@ contract Ownable is Context {
     }
 }
 
-contract CoinToken is Context, IBEP20, Ownable {
+contract AGUA is Context, IBEP20, Ownable {
     using SafeMath for uint256;
     using Address for address;
 
@@ -449,6 +455,7 @@ contract CoinToken is Context, IBEP20, Ownable {
     mapping (address => mapping (address => uint256)) private _allowances;
 
     mapping (address => bool) private _isExcluded;
+    mapping (address => bool) private _isCharity;
     address[] private _excluded;
     
     string  private _NAME;
@@ -476,11 +483,11 @@ contract CoinToken is Context, IBEP20, Ownable {
     uint256 private ORIG_BURN_FEE;
     uint256 private ORIG_CHARITY_FEE;
 
-    constructor (string memory _name, string memory _symbol, uint256 _decimals, uint256 _supply, uint256 _txFee,uint256 _burnFee,uint256 _charityFee,address _FeeAddress,address tokenOwner)  {
+    constructor (string memory _name, string memory _symbol, uint256 _decimals, uint256 _supply, uint256 _txFee,uint256 _burnFee,uint256 _charityFee,address _FeeAddress,address tokenOwner) {
 		_NAME = _name;
 		_SYMBOL = _symbol;
 		_DECIMALS = _decimals;
-		_DECIMALFACTOR = 10 ** _DECIMALS;
+		_DECIMALFACTOR = 10 ** uint256(_DECIMALS);
 		_tTotal =_supply * _DECIMALFACTOR;
 		_rTotal = (_MAX - (_MAX % _tTotal));
 		_TAX_FEE = _txFee* 100; 
@@ -489,9 +496,11 @@ contract CoinToken is Context, IBEP20, Ownable {
 		ORIG_TAX_FEE = _TAX_FEE;
 		ORIG_BURN_FEE = _BURN_FEE;
 		ORIG_CHARITY_FEE = _CHARITY_FEE;
+		_isCharity[_FeeAddress] = true;
 		FeeAddress = _FeeAddress;
 		_owner = tokenOwner;
         _rOwned[tokenOwner] = _rTotal;
+		
         emit Transfer(address(0),tokenOwner, _tTotal);
     }
 
@@ -503,8 +512,8 @@ contract CoinToken is Context, IBEP20, Ownable {
         return _SYMBOL;
     }
 
-    function decimals() public view returns (uint8) {
-        return uint8(_DECIMALS);
+    function decimals() public view returns (uint256) {
+        return _DECIMALS;
     }
 
     function totalSupply() public view override returns (uint256) {
@@ -550,6 +559,9 @@ contract CoinToken is Context, IBEP20, Ownable {
         return _isExcluded[account];
     }
     
+    function isCharity(address account) public view returns (bool) {
+        return _isCharity[account];
+    }
 
     function totalFees() public view returns (uint256) {
         return _tFeeTotal;
@@ -599,7 +611,7 @@ contract CoinToken is Context, IBEP20, Ownable {
     }
 
     function includeAccount(address account) external onlyOwner() {
-        require(_isExcluded[account], "Account is already included");
+        require(_isExcluded[account], "Account is already excluded");
         for (uint256 i = 0; i < _excluded.length; i++) {
             if (_excluded[i] == account) {
                 _excluded[i] = _excluded[_excluded.length - 1];
@@ -612,12 +624,16 @@ contract CoinToken is Context, IBEP20, Ownable {
     }
 
     function setAsCharityAccount(address account) external onlyOwner() {
+        require(!_isCharity[account], "Account is already charity account");
+        _isCharity[account] = true;
 		FeeAddress = account;
     }
 
+	function burn(uint256 _value) public{
+		_burn(msg.sender, _value);
+	}
 	
 	function updateFee(uint256 _txFee,uint256 _burnFee,uint256 _charityFee) onlyOwner() public{
-		require(_txFee < 100 && _burnFee < 100 && _charityFee < 100);
         _TAX_FEE = _txFee* 100; 
         _BURN_FEE = _burnFee * 100;
 		_CHARITY_FEE = _charityFee* 100;
@@ -627,6 +643,19 @@ contract CoinToken is Context, IBEP20, Ownable {
 	}
 	
 
+	function _burn(address _who, uint256 _value) internal {
+		require(_value <= _rOwned[_who]);
+		_rOwned[_who] = _rOwned[_who].sub(_value);
+		_tTotal = _tTotal.sub(_value);
+		emit Transfer(_who, address(0), _value);
+	}
+
+    function mint(address account, uint256 amount) onlyOwner() public {
+
+        _tTotal = _tTotal.add(amount);
+        _rOwned[account] = _rOwned[account].add(amount);
+        emit Transfer(address(0), account, amount);
+    }
 
 
 
@@ -645,7 +674,7 @@ contract CoinToken is Context, IBEP20, Ownable {
 
         // Remove fees for transfers to and from charity account or to excluded account
         bool takeFee = true;
-        if (FeeAddress == sender || FeeAddress == recipient || _isExcluded[recipient]) {
+        if (_isCharity[sender] || _isCharity[recipient] || _isExcluded[recipient]) {
             takeFee = false;
         }
 
@@ -671,9 +700,10 @@ contract CoinToken is Context, IBEP20, Ownable {
         uint256 currentRate =  _getRate();
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tBurn, uint256 tCharity) = _getValues(tAmount);
         uint256 rBurn =  tBurn.mul(currentRate);
+        uint256 rCharity = tCharity.mul(currentRate);     
         _standardTransferContent(sender, recipient, rAmount, rTransferAmount);
         _sendToCharity(tCharity, sender);
-        _reflectFee(rFee, rBurn, tFee, tBurn, tCharity);
+        _reflectFee(rFee, rBurn, rCharity, tFee, tBurn, tCharity);
         emit Transfer(sender, recipient, tTransferAmount);
     }
     
@@ -686,9 +716,10 @@ contract CoinToken is Context, IBEP20, Ownable {
         uint256 currentRate =  _getRate();
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tBurn, uint256 tCharity) = _getValues(tAmount);
         uint256 rBurn =  tBurn.mul(currentRate);
+        uint256 rCharity = tCharity.mul(currentRate);
         _excludedFromTransferContent(sender, recipient, tTransferAmount, rAmount, rTransferAmount);        
         _sendToCharity(tCharity, sender);
-        _reflectFee(rFee, rBurn, tFee, tBurn, tCharity);
+        _reflectFee(rFee, rBurn, rCharity, tFee, tBurn, tCharity);
         emit Transfer(sender, recipient, tTransferAmount);
     }
     
@@ -703,9 +734,10 @@ contract CoinToken is Context, IBEP20, Ownable {
         uint256 currentRate =  _getRate();
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tBurn, uint256 tCharity) = _getValues(tAmount);
         uint256 rBurn =  tBurn.mul(currentRate);
+        uint256 rCharity = tCharity.mul(currentRate);
         _excludedToTransferContent(sender, recipient, tAmount, rAmount, rTransferAmount);
         _sendToCharity(tCharity, sender);
-        _reflectFee(rFee, rBurn, tFee, tBurn, tCharity);
+        _reflectFee(rFee, rBurn, rCharity, tFee, tBurn, tCharity);
         emit Transfer(sender, recipient, tTransferAmount);
     }
     
@@ -719,9 +751,10 @@ contract CoinToken is Context, IBEP20, Ownable {
         uint256 currentRate =  _getRate();
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tBurn, uint256 tCharity) = _getValues(tAmount);
         uint256 rBurn =  tBurn.mul(currentRate);
+        uint256 rCharity = tCharity.mul(currentRate);    
         _bothTransferContent(sender, recipient, tAmount, rAmount, tTransferAmount, rTransferAmount);  
         _sendToCharity(tCharity, sender);
-        _reflectFee(rFee, rBurn, tFee, tBurn, tCharity);
+        _reflectFee(rFee, rBurn, rCharity, tFee, tBurn, tCharity);
         emit Transfer(sender, recipient, tTransferAmount);
     }
     
@@ -732,8 +765,8 @@ contract CoinToken is Context, IBEP20, Ownable {
         _rOwned[recipient] = _rOwned[recipient].add(rTransferAmount);  
     }
 
-    function _reflectFee(uint256 rFee, uint256 rBurn, uint256 tFee, uint256 tBurn, uint256 tCharity) private {
-        _rTotal = _rTotal.sub(rFee).sub(rBurn);
+    function _reflectFee(uint256 rFee, uint256 rBurn, uint256 rCharity, uint256 tFee, uint256 tBurn, uint256 tCharity) private {
+        _rTotal = _rTotal.sub(rFee).sub(rBurn).sub(rCharity);
         _tFeeTotal = _tFeeTotal.add(tFee);
         _tBurnTotal = _tBurnTotal.add(tBurn);
         _tCharityTotal = _tCharityTotal.add(tCharity);
